@@ -11,3 +11,4 @@ dependencies:
   - pip:
     - torchvision==0.1.9
     - opencv-python
+    - matplotlib
