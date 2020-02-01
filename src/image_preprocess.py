@@ -1,7 +1,7 @@
 import numpy as np
 import cv2
 
-def path_to_pts(d,resize=False,s_x=1,s_y=1):
+def path_to_pts(d,s_x=1,s_y=1):
      """Converts path from a list of dictionaries with x and y positions 
      into a list of points.
      
@@ -9,7 +9,6 @@ def path_to_pts(d,resize=False,s_x=1,s_y=1):
          d {list} -- List of dictionaries, each with 'x' and 'y' keys corresponding to float values.
      
      Keyword Arguments:
-         resize {bool} -- Option to resize annotations (default: {False})
          s_x {float} -- Stretch factor of the width (default: {1})
          s_y {float} -- Stretch factor of the height (default: {1})
      
@@ -18,14 +17,11 @@ def path_to_pts(d,resize=False,s_x=1,s_y=1):
      """
      pts = []
      for i in d:
-          if resize:
-               pt = [int(i['x']*s_x),int(i['y']*s_y)] #stretch points to new pixels
-          else:
-               pt = [int(i['x']),int(i['y'])] #fit annotations to nearest pixel
+          pt = [int(i['x']*s_x),int(i['y']*s_y)] #stretch points to new pixels
           pts.append(pt)
      return np.array(pts)
 
-def format_annotations(data,resize=False,s_x=1,s_y=1):
+def format_annotations(data,s_x=1,s_y=1):
      """Formats the annotations from nested dictionaries to shape used 
      by cv2.polylines
      
@@ -33,7 +29,6 @@ def format_annotations(data,resize=False,s_x=1,s_y=1):
          data {list} -- List of all annotations for a single image.
      
      Keyword Arguments:
-         resize {bool} -- Option to resize annotations. Used by path_to_pts (default: {False})
          s_x {float} -- Stretch factor of the width. Used by path_to_pts (default: {1})
          s_y {float} -- Stretch factor of the height. Used by path_to_pts (default: {1})
      
