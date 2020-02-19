@@ -1,6 +1,6 @@
 import torch
 from torch.autograd import Function
-from ..box_utils import decode, nms
+from model.ssd.layers.box_utils import decode, nms
 
 # from data
 cfg = {

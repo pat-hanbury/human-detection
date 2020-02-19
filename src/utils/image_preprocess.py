@@ -38,7 +38,7 @@ def format_annotations(data,s_x=1,s_y=1):
      annot_list = []
      for annot in data:
           poly_path = annot['polygon']['path'] #grab path
-          poly_path = path_to_pts(poly_path,resize,s_x,s_y).reshape((-1,1,2)) #convert to pts in format for cv2.polylines
+          poly_path = path_to_pts(poly_path,s_x,s_y).reshape((-1,1,2)) #convert to pts in format for cv2.polylines
           annot_list.append(poly_path)
      return annot_list
 
@@ -70,7 +70,7 @@ def resize(img, annotations, target_height, target_width):
      resized_img = cv2.resize(img, target_dim, interpolation=cv2.INTER_LINEAR)
 
      #resize annotations
-     pts = format_annotations(annotations,resize=True,s_x=stretch_x,s_y=stretch_y)
+     pts = format_annotations(annotations,s_x=stretch_x,s_y=stretch_y)
 
      return resized_img, pts
 

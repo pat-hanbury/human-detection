@@ -1,2 +1,14 @@
 # Pycharm Files
 .idea/*
+
+# mac files
+*_MACOSX*
+
+# data directory
+/data/*
+
+# iPython checkpoints
+*.ipynb_checkpoints*
+
+# compiled pyc files
+*.pyc
