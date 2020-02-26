@@ -12,3 +12,6 @@
 
 # compiled pyc files
 *.pyc
+
+# weight files
+*.pth
