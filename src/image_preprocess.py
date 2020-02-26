@@ -1,7 +1,7 @@
 import numpy as np
 import cv2
 import json
-import torch
+from torch import Tensor
 from os import listdir
 
 
@@ -177,8 +177,7 @@ def get_dataset(dataset_path, height, width, scaling='minmax'):
         scaling {str} -- [description] (default: {'minmax'})
 
     Returns:
-        List: tensor (3x300x300), List: tensor (4) -- Two ordered lists (images, annotations)
-
+        List: tensor (3x300x300), List: List: tensor (4) -- Two ordered lists (images, annotations)
     """
     # files, sorted so that img & annots are in same order
     image_names = sorted([i for i in listdir(dataset_path) if i[-4:] == '.png'])
@@ -200,10 +199,10 @@ def get_dataset(dataset_path, height, width, scaling='minmax'):
         # bounding box
         temp_boxes = []
         for poly in temp_ann:
-            temp_boxes.append(polygon_to_box(poly))
+            temp_boxes.append(Tensor(polygon_to_box(poly)))
 
         # append
-        images.append(torch.Tensor(temp_img))
+        images.append(Tensor(temp_img))
         annotations.append(temp_boxes)
 
     return images, annotations
