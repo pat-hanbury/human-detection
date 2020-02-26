@@ -1,11 +1,11 @@
-from layers.modules import MultiBoxLoss
-from ssd import build_ssd
+from model.ssd.layers.modules import MultiBoxLoss
+from model.ssd.ssd import build_ssd
 import os
 import time
+from datetime import datetime
 import torch
-from torch.autograd import Variable
 import torch.optim as optim
-import torch.utils.data as data
+from utils.visdom import VisdomLinePlotter
 
 
 configs = {
@@ -13,7 +13,7 @@ configs = {
     "weights_root": "/mnt/c/Users/patri/dev/capstone/human-detection/weights/",
     "pretrained_weights_path": "weights/vgg16_reducedfc.pth",
     "cuda": False,
-    "learning_rate": 1e-3,
+    "initial_lr": 1e-3,
     "momentum": 0.9,
     "gamma": 0.1,
     "batch_size": 32,
@@ -43,7 +43,7 @@ def get_pretrained_ssd(configs):
 
 def get_optimizer(net, configs):
     optimizer = optim.SGD(net.parameters(), 
-                          lr=configs["learning_rate"],
+                          lr=configs["initial_lr"],
                           momentum=configs["momentum"],
                           weight_decay=configs["weight_decay"])
     return optimizer
@@ -55,13 +55,30 @@ def get_dataset(configs):
     configs["batch_size"]
     raise NotImplementedError
 
+def save_weights(net, configs, epoch):
+    fn = "ssd_" + str(epoch) + "_" + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + ".pth"
+    path = os.path.join(configs["weights_root"], fn)
+    torch.save(net.state_dict(), path)
+
+def adjust_learning_rate(optimizer, gamma, step, lr):
+    """Sets the learning rate to the initial LR decayed by 10 at every
+        specified step
+    # Adapted from PyTorch Imagenet example:
+    # https://github.com/pytorch/examples/blob/master/imagenet/main.py
+    """
+    lr = lr * gamma ** (step)
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
+    return lr
 
 def train(configs):
     setup_directories(configs)
     net = get_pretrained_ssd(configs)
     optimizer = get_optimizer(net, configs)
     criterion = get_criterion(configs)
-    dataset = get_dataset(configs)
+    train_imgs, train_anns, val_imgs, val_anns = get_dataset(configs)
+    plotter = VisdomLinePlotter()
+    learning_rate = configs["initial_lr"]
 
     net.train()
 
@@ -69,75 +86,60 @@ def train(configs):
     loc_loss = 0
     conf_loss = 0
     step_index = 0
+    epoch_train_losses = []
+    epoch_val_losses = []
 
     # create batch iterator
     for epoch in range(configs["num_epochs"]):
         for phase in ["train", "val"]:
             if epoch % int(configs["num_epochs"] / 3) == 0 and epoch != 0:
                 step_index += 1
-                adjust_learning_rate(optimizer, configs["gamma"], step_index)
+                learning_rate, adjust_learning_rate(optimizer, configs["gamma"], step_index, learning_rate)
 
-            # load train data
-            images, targets = next(batch_iterator)
+            imgs, anns = train_imgs, train_anns if phase == "train" else val_imgs, val_anns
 
-            images = Variable(images)
-            targets = [Variable(ann, volatile=True) for ann in targets]
-            # forward
+            iterations = 0
+            losses = []
+
             t0 = time.time()
-            print("input images shape: ")
-            print(images.shape)
-            out = net(images)
-            print("Output images shape:")
-            print(out[0].shape)
-            print(out[1].shape)
-            print(out[2].shape)
-            # backprop
-            optimizer.zero_grad()
-            loss_l, loss_c = criterion(out, targets)
-            loss = loss_l + loss_c
-            loss.backward()
-            optimizer.step()
+            for images, targets in zip(imgs, anns):
+                out = net(images)
+                optimizer.zero_grad()
+                loss_l, loss_c = criterion(out, targets)
+                loss = loss_l + loss_c
+                loss.backward()
+                optimizer.step()
+                loc_loss += loss_l.item()
+                conf_loss += loss_c.item()
+                losses += [(loc_loss + conf_loss)]
+
+                if iterations % 10 == 0:
+                    if phase == "train":
+                        plotter.plot(f"Train Loss for Epoch={epoch}", "splitname", f"Train Loss for Epoch={epoch}",
+                                     "Epoch", "Loss", range(len(losses)), losses)
+                    else:
+                        plotter.plot(f"Val Loss for Epoch={epoch}", "splitname", f"Val Loss for Epoch={epoch}", 
+                                     "Epoch", "Loss", range(len(losses)), losses)
+
             t1 = time.time()
-            loc_loss += loss_l.item()
-            conf_loss += loss_c.item()
 
-            if iteration % 10 == 0:
-                print('timer: %.4f sec.' % (t1 - t0))
-                print('iter ' + repr(iteration) + ' || Loss: %.4f ||' % (loss.item()), end=' ')
+            print(f'Epoch {epoch} {phase} time: {(t1 - t0):%.4f} sec.')
+            print(f"{phase} Loss: {loss.item():%.4f}")
 
-            if iteration != 0 and iteration % 5000 == 0:
-                print('Saving state, iter:', iteration)
-                torch.save(ssd_net.state_dict(), 'weights/ssd300_COCO_' +
-                        repr(iteration) + '.pth')
-    torch.save(ssd_net.state_dict(),
-               "save_test.pth")
+            # Plot loss
+            if phase == "train":
+                epoch_train_losses += [(loc_loss + conf_loss) / len(imgs)]
+                plotter.plot("Epoch Train Loss", "splitname", "Epoch Train Loss", "Epoch",
+                             "Loss", range(len(epoch_train_losses)), epoch_train_losses)
+            else:
+                epoch_val_losses += [(loc_loss + conf_loss) / len(imgs)]
+                plotter.plot("Epoch Val Loss", "splitname", "Epoch Val Loss", "Epoch",
+                             "Loss", range(len(epoch_val_losses)), epoch_val_losses)
+
+            if phase == "train":
+                save_weights(net, configs, epoch)
 
     return net, images
-
-
-def adjust_learning_rate(optimizer, gamma, step):
-    """Sets the learning rate to the initial LR decayed by 10 at every
-        specified step
-    # Adapted from PyTorch Imagenet example:
-    # https://github.com/pytorch/examples/blob/master/imagenet/main.py
-    """
-    lr = args.lr * gamma ** (step)
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
-
-
-
-def create_vis_plot(_xlabel, _ylabel, _title, _legend):
-    return viz.line(
-        X=torch.zeros((1,)).cpu(),
-        Y=torch.zeros((1, 3)).cpu(),
-        opts=dict(
-            xlabel=_xlabel,
-            ylabel=_ylabel,
-            title=_title,
-            legend=_legend
-        )
-    )
 
 
 if __name__ == '__main__':
