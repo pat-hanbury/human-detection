@@ -1,7 +1,7 @@
 import numpy as np
 import cv2
 import json
-from torch import Tensor
+from torch import Tensor, stack
 from os import listdir
 
 
@@ -163,31 +163,42 @@ def normalize_img(img, scaling='minmax'):
                         "zscore standardization are supported.")
 
 
-def get_dataset(dataset_path, height, width, scaling='minmax'):
+def get_dataset(configs, height, width, scaling='minmax'):
     """Grabs images, preprocesses them, and returns list of tensors.
     Also preprocesses annotations.
 
     Arguments:
-        dataset_path {string} -- Path to the root of dataset. This directory
+        configs {dict} -- Contains config options for training.
+                          Uses "dataset_root" and "batch_size".
                                  should contain both images and annotation files.
         height {int} -- Pixel height required by the model.
         width {int} -- Pixel width required by the model.
 
     Keyword Arguments:
-        scaling {str} -- [description] (default: {'minmax'})
+        scaling {str} -- Describes the normalization method. (default: {'minmax'})
 
     Returns:
-        List: tensor (3x300x300), List: List: tensor (4) -- Two ordered lists (images, annotations)
+        List: tensor batches (Bx300x300x3), List: List: tensor (Nx4)
+        -- Two ordered lists (image batches, annotation batch lists). The
+           annotation batch lists contain tensors of varying length due to
+           there being different number of annotations per image.
     """
+    dataset_path = configs["dataset_root"]
+    batch_size = configs["batch_size"]
     # files, sorted so that img & annots are in same order
     image_names = sorted([i for i in listdir(dataset_path) if i[-4:] == '.png'])
     ann_names = sorted([i for i in listdir(dataset_path) if i[-5:] == '.json'])
 
     # import images and convert to tensor
     images = []
+    batch_img = []
     annotations = []
-    for iname, aname in zip(image_names, ann_names):
+    batch_ann = []
 
+    # for each image
+    for i, iname, aname in zip(range(1, len(ann_names) + 1),
+                               image_names,
+                               ann_names):
         # get corresponding image/annot
         temp_img = cv2.imread(dataset_path + iname)  # image
         with open(dataset_path + aname) as ann_file:  # annotation
@@ -196,13 +207,23 @@ def get_dataset(dataset_path, height, width, scaling='minmax'):
         temp_img = normalize_img(temp_img, scaling)
         # resize
         temp_img, temp_ann = resize(temp_img, temp_ann['annotations'], height, width)
-        # bounding box
+        # bounding boxes
         temp_boxes = []
         for poly in temp_ann:
             temp_boxes.append(Tensor(polygon_to_box(poly)))
 
-        # append
-        images.append(Tensor(temp_img))
-        annotations.append(temp_boxes)
+        # append as tensors
+        batch_img.append(Tensor(temp_img))
+        batch_ann.append(stack(temp_boxes))
+        if i % batch_size == 0:
+            images.append(stack(batch_img))
+            annotations.append(batch_ann)
+            batch_img = []
+            batch_ann = []
+
+    # last batch smaller than batch size
+    if len(batch_img) > 0:
+        images.append(stack(batch_img))
+        annotations.append(batch_ann)
 
     return images, annotations
