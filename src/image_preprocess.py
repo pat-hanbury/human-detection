@@ -1,5 +1,8 @@
 import numpy as np
 import cv2
+import json
+from torch import Tensor, stack
+from os import listdir
 
 
 def path_to_pts(d, s_x=1, s_y=1):
@@ -24,8 +27,41 @@ def path_to_pts(d, s_x=1, s_y=1):
     return np.array(pts)
 
 
-def polygon_to_box(poly_path):
-    raise NotImplementedError
+def polygon_to_box(poly_paths):
+    """Turn polygon bounding annotations into a square bounding box.
+
+    Arguments:
+        poly_paths {numpy array} -- Array containing polygon points in order,
+                                    formatted to be compatible with cv2.polylines
+
+    Returns:
+        int, int, int, int -- Pixel locations for left, right, top, and bottom values
+                              of bounding box.
+    """
+    initialized = False
+    # expand bounding box
+    for pt in poly_paths:
+        pt = pt[0]
+        if not initialized:
+            # initialize bounding box
+            left = pt[0]
+            right = pt[0]
+            top = pt[1]
+            bottom = pt[1]
+            initialized = True
+
+        x, y = pt
+        # update x bounds
+        if x < left:
+            left = x
+        elif x > right:
+            right = x
+        # update y bounds
+        if y < bottom:
+            bottom = y
+        elif y > top:
+            top = y
+    return left, top, right, bottom
 
 
 def format_annotations(data, s_x=1, s_y=1):
@@ -107,6 +143,9 @@ def normalize_img(img, scaling='minmax'):
     Returns:
         [numpy array] -- rescaled image.
 
+    Raises:
+        TypeError -- when scaling option is not recognized.
+
     Note:
         Both currently supported scalings are LOCAL methods.
         For example, two images with different maximum values
@@ -117,22 +156,74 @@ def normalize_img(img, scaling='minmax'):
         # (X - min) / (max - min)
         return np.interp(img, (img.min(), img.max()), (0, +1))
     elif scaling == 'zscore':
-        flat_img = img.flatten()
-        pixel_mean = np.mean(flat_img)  # get mean
-        pixel_std = np.std(flat_img)  # get standard deviation
-        return (img - pixel_mean) / pixel_std  # (X - mean) / std
+        return (img - img.mean()) / img.std()  # (X - mean) / std
     else:
-        raise NotImplementedError('Currently only minmax normalization and \
-                                  zscore standardization are supported.')
+        raise TypeError("'{}' invalid keyword argument. ".format(scaling) +
+                        "Only minmax normalization and "
+                        "zscore standardization are supported.")
 
 
-def get_dataset(configs):
-    """
-    configs["dataset_root"] = "path/to/root/of/datset"
-    --- use this to grab images, do whatever preprocessing is needed,
-    and output like this:
+def get_dataset(configs, height, width, scaling='minmax'):
+    """Grabs images, preprocesses them, and returns list of tensors.
+    Also preprocesses annotations.
+
+    Arguments:
+        configs {dict} -- Contains config options for training.
+                          Uses "dataset_root" and "batch_size".
+                                 should contain both images and annotation files.
+        height {int} -- Pixel height required by the model.
+        width {int} -- Pixel width required by the model.
+
+    Keyword Arguments:
+        scaling {str} -- Describes the normalization method. (default: {'minmax'})
 
     Returns:
-        List: tensor images (3x300x300), list: annotations
+        List: tensor batches (Bx300x300x3), List: List: tensor (Nx4)
+        -- Two ordered lists (image batches, annotation batch lists). The
+           annotation batch lists contain tensors of varying length due to
+           there being different number of annotations per image.
     """
-    raise NotImplementedError
+    dataset_path = configs["dataset_root"]
+    batch_size = configs["batch_size"]
+    # files, sorted so that img & annots are in same order
+    image_names = sorted([i for i in listdir(dataset_path) if i[-4:] == '.png'])
+    ann_names = sorted([i for i in listdir(dataset_path) if i[-5:] == '.json'])
+
+    # import images and convert to tensor
+    images = []
+    batch_img = []
+    annotations = []
+    batch_ann = []
+
+    # for each image
+    for i, iname, aname in zip(range(1, len(ann_names) + 1),
+                               image_names,
+                               ann_names):
+        # get corresponding image/annot
+        temp_img = cv2.imread(dataset_path + iname)  # image
+        with open(dataset_path + aname) as ann_file:  # annotation
+            temp_ann = json.load(ann_file)
+        # normalize image
+        temp_img = normalize_img(temp_img, scaling)
+        # resize
+        temp_img, temp_ann = resize(temp_img, temp_ann['annotations'], height, width)
+        # bounding boxes
+        temp_boxes = []
+        for poly in temp_ann:
+            temp_boxes.append(Tensor(polygon_to_box(poly)))
+
+        # append as tensors
+        batch_img.append(Tensor(temp_img))
+        batch_ann.append(stack(temp_boxes))
+        if i % batch_size == 0:
+            images.append(stack(batch_img))
+            annotations.append(batch_ann)
+            batch_img = []
+            batch_ann = []
+
+    # last batch smaller than batch size
+    if len(batch_img) > 0:
+        images.append(stack(batch_img))
+        annotations.append(batch_ann)
+
+    return images, annotations
