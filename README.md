@@ -7,3 +7,10 @@ The goal of this project is to produce a publically available, general purpose m
 
 ## 1. Dataset
 The dataset will be comprised of 2000+ annotated images from 100+ publically available security camera feeds found at insecam.org.
+
+## Setting Up Virtual Env
+Create the environment:
+`conda env create --file=environment.yml`
+
+Update the Environment:
+`conda env update --name human-detection --file environment.yml --prune`
