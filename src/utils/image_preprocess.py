@@ -5,13 +5,14 @@ from torch import Tensor, stack
 from os import listdir
 
 
-def path_to_pts(d, s_x=1, s_y=1):
+def path_to_pts(d, target_dim, s_x=1, s_y=1):
     """Converts path from a list of dictionaries with x and y positions
     into a list of points.
 
     Arguments:
-        d {list} -- List of dictionaries, each with 'x' and 'y' keys
-                    corresponding to float values.
+        d {list}                -- List of dictionaries, each with 'x' and 'y' keys
+                                   corresponding to float values.
+        target_dim {tuple[int]} -- tuple containing (target_width, target_height)
 
     Keyword Arguments:
         s_x {float} -- Stretch factor of the width (default: {1})
@@ -20,9 +21,10 @@ def path_to_pts(d, s_x=1, s_y=1):
     Returns:
         [numpy.ndarray] -- Numpy array with new pts
     """
+    (target_width, target_height) = target_dim
     pts = []
     for i in d:
-        pt = [int(i['x']*s_x), int(i['y']*s_y)]  # stretch points to new pixels
+        pt = [i['x']*s_x/target_width, i['y']*s_y/target_height]  # stretch points to new pixels
         pts.append(pt)
     return np.array(pts)
 
@@ -34,9 +36,12 @@ def polygon_to_box(poly_paths):
         poly_paths {numpy array} -- Array containing polygon points in order,
                                     formatted to be compatible with cv2.polylines
 
+
     Returns:
-        int, int, int, int -- Pixel locations for left, right, top, and bottom values
-                              of bounding box.
+        {numpy array}            -- Length 5 1D numpy float array with pixel locations for left, right, top, and bottom
+                                    values for indices 0-4 and constant of bounding box for indices. 5th index is 1
+                                    representing the class. For SSD300 people detection application, class will always 
+                                    be 1 (person)
     """
     initialized = False
     # expand bounding box
@@ -61,15 +66,16 @@ def polygon_to_box(poly_paths):
             bottom = y
         elif y > top:
             top = y
-    return left, top, right, bottom
+    return np.asarray([left, bottom, right, top, 1.0])  # the `1` is added to format the annotation as needed for SSD300
 
 
-def format_annotations(data, s_x=1, s_y=1):
+def format_annotations(data, target_dim, s_x=1, s_y=1):
     """Formats the annotations from nested dictionaries
     to shape used by cv2.polylines
 
     Arguments:
-        data {list} -- List of all annotations for a single image.
+        data {list}             -- List of all annotations for a single image.
+        target_dim {tuple[int]} -- tuple containing (target_width, target_height)
 
     Keyword Arguments:
         s_x {float} --  Stretch factor of the width.
@@ -84,8 +90,7 @@ def format_annotations(data, s_x=1, s_y=1):
     for annot in data:
         poly_path = annot['polygon']['path']  # grab path
         # convert to pts in format for cv2.polylines
-        poly_path = path_to_pts(poly_path, resize,
-                                s_x, s_y).reshape((-1, 1, 2))
+        poly_path = path_to_pts(poly_path, target_dim, s_x, s_y).reshape((-1, 1, 2))
         annot_list.append(poly_path)
     return annot_list
 
@@ -96,12 +101,12 @@ def resize(img, annotations, target_height, target_width):
     are remapped to fit the new size of the image
 
     Arguments:
-        img {numpy array} -- Can be any height and width,
-                             but with 3 channels for RGB
-        annotations {dict} -- Contains all annotation data
-                              as formatted by Darwin.
+        img {numpy array}       -- Can be any height and width,
+                                   but with 3 channels for RGB
+        annotations {dict}      -- Contains all annotation data
+                                   as formatted by Darwin.
         target_height {integer} -- Pixel height of the target image
-        target_width {integer} -- Pixel width of the target image
+        target_width {integer}  -- Pixel width of the target image
 
     Returns:
         [tuple] --  Image in desired shape, Altered annotations
@@ -123,8 +128,7 @@ def resize(img, annotations, target_height, target_width):
     resized_img = cv2.resize(img, target_dim, interpolation=cv2.INTER_LINEAR)
 
     # resize annotations
-    pts = format_annotations(annotations, resize=True,
-                             s_x=stretch_x, s_y=stretch_y)
+    pts = format_annotations(annotations, target_dim, s_x=stretch_x, s_y=stretch_y)
 
     return resized_img, pts
 
@@ -206,7 +210,8 @@ def get_dataset(configs, height, width, scaling='minmax'):
         # normalize image
         temp_img = normalize_img(temp_img, scaling)
         # resize
-        temp_img, temp_ann = resize(temp_img, temp_ann['annotations'], height, width)
+        temp_img, temp_ann = resize(temp_img, temp_ann['annotations'],
+                                    height, width)
         # bounding boxes
         temp_boxes = []
         for poly in temp_ann:
@@ -216,14 +221,14 @@ def get_dataset(configs, height, width, scaling='minmax'):
         batch_img.append(Tensor(temp_img))
         batch_ann.append(stack(temp_boxes))
         if i % batch_size == 0:
-            images.append(stack(batch_img))
+            images.append(stack(batch_img).permute(0, 3, 1, 2))
             annotations.append(batch_ann)
             batch_img = []
             batch_ann = []
 
     # last batch smaller than batch size
     if len(batch_img) > 0:
-        images.append(stack(batch_img))
+        images.append(stack(batch_img).permute(0, 3, 1, 2))  # (32, 300, 300, 3) (32, 3, 300, 300)
         annotations.append(batch_ann)
 
     return images, annotations

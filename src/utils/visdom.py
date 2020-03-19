@@ -1,12 +1,12 @@
 from visdom import Visdom
 import numpy as np
 
+
 class VisdomLinePlotter(object):
     """
     Plots to Visdom
 
     Borrowed from: https://github.com/noagarcia/visdom-tutorial
-    
     """
     def __init__(self, env_name='main'):
         self.viz = Visdom()

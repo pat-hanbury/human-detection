@@ -9,6 +9,7 @@ dependencies:
   - pip
   - jupyterlab
   - visdom
+  - scikit-learn
   - pip:
     - torchvision==0.1.9
     - opencv-python
