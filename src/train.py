@@ -11,8 +11,8 @@ from sklearn.model_selection import train_test_split
 
 
 configs = {
-    "dataset_root": "/mnt/c/Users/patri/dev/capstone/human-detection/data/testset-jan25/",
-    "weights_root": "/mnt/c/Users/patri/dev/capstone/human-detection/weights/",
+    "dataset_root": "/home/paperspace/data/",
+    "weights_root": "/home/paperspace/weights/",
     "pretrained_weights_path": "weights/vgg16_reducedfc.pth",
     "test_size": 0.2,
     "initial_lr": 1e-3,
@@ -23,7 +23,15 @@ configs = {
     "num_classes": 2,  # only 2 classes supported at the moment (including background)
     "dimension": 300,  # only SSD 300 supported at the moment
     "num_epochs": 10,
-    "DEBUG": True
+
+    "DEBUG": True,
+    "debug_batch_size": 1,
+    "debug_num_epochs": 100,
+    "debug_max_imgs": 10,
+    "checkpoint_freq_by_epoch": 80,
+
+    # visdom
+    "plot_epoch_losses": False
 }
 
 
@@ -55,8 +63,8 @@ def get_optimizer(net, configs):
     return optimizer
 
 
-def get_criterion(configs):
-    return MultiBoxLoss(configs["num_classes"], 0.5, True, 0, True, 3, 0.5, False, False)
+def get_criterion(configs, CUDA):
+    return MultiBoxLoss(configs["num_classes"], 0.5, True, 0, True, 3, 0.5, False, CUDA)
 
 
 def get_train_val_datasets(configs):
@@ -88,12 +96,12 @@ def train(configs):
     CUDA = torch.cuda.is_available()
 
     if DEBUG:
-        configs["batch_size"] = 1
+        configs["batch_size"] = configs["debug_batch_size"]
 
     setup_directories(configs)
     net = get_pretrained_ssd(configs, CUDA)
     optimizer = get_optimizer(net, configs)
-    criterion = get_criterion(configs)
+    criterion = get_criterion(configs, CUDA)
     train_imgs, val_imgs, train_anns, val_anns = get_train_val_datasets(configs)
     plotter = VisdomLinePlotter()
     learning_rate = configs["initial_lr"]
@@ -101,6 +109,8 @@ def train(configs):
     net.train()
 
     if CUDA:
+        print("*****USING CUDA*******")
+        torch.set_default_tensor_type(torch.cuda.FloatTensor)
         net.cuda()
 
     # loss counters
@@ -108,8 +118,8 @@ def train(configs):
     epoch_val_losses = []
 
     if DEBUG:
-        configs["num_epochs"] = 10
-        (train_imgs, train_anns) = (train_imgs[:1], train_anns[:1]) 
+        configs["num_epochs"] = configs["debug_num_epochs"]
+        (train_imgs, train_anns) = (train_imgs[:configs["debug_max_imgs"]], train_anns[:configs["debug_max_imgs"]])
         (val_imgs, val_anns) = (train_imgs, train_anns)
 
     # create batch iterator
@@ -120,10 +130,6 @@ def train(configs):
 
             (imgs, anns) = (train_imgs, train_anns) if phase == "train" else (val_imgs, val_anns)
 
-            if CUDA:
-                imgs = imgs.cuda()
-                anns = anns.cuda()
-
             iterations = 0
             losses = []
 
@@ -133,7 +139,17 @@ def train(configs):
             total_conf_loss = 0
 
             for images, targets in zip(imgs, anns):
+                if CUDA:
+                    images = images.cuda()
+                    targets = [x.cuda() for x in targets]
+                
                 out = net(images)
+
+                # TEMPORARY FIX
+                # if CUDA:
+                #     loc_data, conf_data, priors = out
+                #     out = loc_data.cuda(), conf_data.cuda(), priors.cuda()
+
                 optimizer.zero_grad()
                 loss_l, loss_c = criterion(out, targets)
                 loss = loss_l + loss_c
@@ -145,15 +161,16 @@ def train(configs):
                 total_conf_loss += conf_loss
                 losses += [(loc_loss + conf_loss)]
 
-                if iterations % 10 == 0:
-                    if phase == "train":
-                        plotter.plot(f"Train Loss for Epoch={epoch}", "splitname", f"Train Loss for Epoch={epoch}",
-                                     "Epoch", "Loss", len(losses) - 1, losses[-1])
-                        losses = []
-                    else:
-                        plotter.plot(f"Val Loss for Epoch={epoch}", "splitname", f"Val Loss for Epoch={epoch}",
-                                     "Epoch", "Loss", len(losses) - 1, losses[-1])
-                        losses = []
+                if configs["plot_epoch_losses"]:
+                    if iterations % 10 == 0:
+                        if phase == "train":
+                            plotter.plot(f"Train Loss for Epoch={epoch}", "splitname", f"Train Loss for Epoch={epoch}",
+                                        "Epoch", "Loss", len(losses) - 1, losses[-1])
+                            losses = []
+                        else:
+                            plotter.plot(f"Val Loss for Epoch={epoch}", "splitname", f"Val Loss for Epoch={epoch}",
+                                        "Epoch", "Loss", len(losses) - 1, losses[-1])
+                            losses = []
 
             t1 = time.time()
 
@@ -170,7 +187,7 @@ def train(configs):
                 plotter.plot("Epoch Val Loss", "splitname", "Epoch Val Loss", "Epoch",
                              "Loss", len(epoch_val_losses) - 1, epoch_val_losses[-1])
 
-            if phase == "train":
+            if configs["checkpoint_freq_by_epoch"] % (epoch + 1) == 0 and phase == "train":
                 save_weights(net, configs, epoch)
 
             iterations += 1

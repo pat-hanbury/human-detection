@@ -23,7 +23,6 @@ coco = {
 cfg = coco
 
 
-
 class MultiBoxLoss(nn.Module):
     """SSD Weighted Loss Function
     Compute Targets:
@@ -61,6 +60,7 @@ class MultiBoxLoss(nn.Module):
         self.negpos_ratio = neg_pos
         self.neg_overlap = neg_overlap
         self.variance = cfg['variance']
+        print(f"MULTIBOX: GPU: {use_gpu}")
 
     def forward(self, predictions, targets):
         """Multibox Loss

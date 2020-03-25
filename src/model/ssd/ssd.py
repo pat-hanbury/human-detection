@@ -137,7 +137,7 @@ class SSD(nn.Module):
             output = (
                 loc.view(loc.size(0), -1, 4),
                 conf.view(conf.size(0), -1, self.num_classes),
-                self.priors
+                self.priors.type(type(x.data))
             )
         return output
 
