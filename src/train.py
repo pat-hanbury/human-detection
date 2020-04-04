@@ -8,12 +8,14 @@ import torch.optim as optim
 from utils.visdom import VisdomLinePlotter
 from utils.image_preprocess import get_dataset
 from sklearn.model_selection import train_test_split
+import json
 
 
 configs = {
-    "dataset_root": "/home/paperspace/data/",
-    "weights_root": "/home/paperspace/weights/",
-    "pretrained_weights_path": "weights/vgg16_reducedfc.pth",
+    "dataset_root": "/home/paperspace/entire_dataset/data/",
+    "weights_root": "/home/paperspace/human-detection/saved_weights",
+    "pretrained_weights_path": "/home/paperspace/human-detection/pretrained_weights/vgg16_reducedfc.pth",
+    "histories_path": "/home/paperspace/human-detection/histories",
     "test_size": 0.2,
     "initial_lr": 1e-3,
     "momentum": 0.9,
@@ -69,8 +71,8 @@ def get_criterion(configs, CUDA):
 
 def get_train_val_datasets(configs):
     height = width = configs["dimension"]
-    images, anns = get_dataset(configs, height, width, scaling='minmax')
-    return train_test_split(images, anns, test_size=configs["test_size"])
+    images, anns, img_names = get_dataset(configs, height, width, scaling='minmax')
+    return train_test_split(images, anns, img_names, test_size=configs["test_size"])
 
 
 def save_weights(net, configs, epoch):
@@ -91,6 +93,25 @@ def adjust_learning_rate(optimizer, gamma, lr):
     return lr
 
 
+def save_history(configs, CUDA, train_img_names, val_img_names):
+    configs["CUDA"] = CUDA
+    date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    fn = "configs_" + date + ".json"
+    pth = os.path.join(configs["histories_path"], fn)
+    with open(pth, 'w') as fp:
+        json.dump(configs, fp)
+
+    image_history = {
+        "train_images": train_img_names,
+        "val_images": val_img_names
+    }
+
+    fn = "images_" + date + ".json"
+    pth = os.path.join(configs["histories_path"], fn)
+    with open(pth, 'w') as fp:
+        json.dump(image_history, fp)
+
+
 def train(configs):
     DEBUG = configs["DEBUG"]
     CUDA = torch.cuda.is_available()
@@ -102,9 +123,11 @@ def train(configs):
     net = get_pretrained_ssd(configs, CUDA)
     optimizer = get_optimizer(net, configs)
     criterion = get_criterion(configs, CUDA)
-    train_imgs, val_imgs, train_anns, val_anns = get_train_val_datasets(configs)
+    train_imgs, val_imgs, train_anns, val_anns, train_img_names, val_img_names = get_train_val_datasets(configs)
     plotter = VisdomLinePlotter()
     learning_rate = configs["initial_lr"]
+
+    save_history(configs, CUDA, train_img_names, val_img_names)
 
     net.train()
 

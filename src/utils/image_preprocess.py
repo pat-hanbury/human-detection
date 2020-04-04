@@ -128,7 +128,10 @@ def resize(img, annotations, target_height, target_width):
     resized_img = cv2.resize(img, target_dim, interpolation=cv2.INTER_LINEAR)
 
     # resize annotations
-    pts = format_annotations(annotations, target_dim, s_x=stretch_x, s_y=stretch_y)
+    if annotations is not None:
+        pts = format_annotations(annotations, target_dim, s_x=stretch_x, s_y=stretch_y)
+    else:
+        pts = []
 
     return resized_img, pts
 
@@ -189,29 +192,47 @@ def get_dataset(configs, height, width, scaling='minmax'):
     """
     dataset_path = configs["dataset_root"]
     batch_size = configs["batch_size"]
-    # files, sorted so that img & annots are in same order
-    image_names = sorted([i for i in listdir(dataset_path) if i[-4:] == '.png'])
+
+    # files
     ann_names = sorted([i for i in listdir(dataset_path) if i[-5:] == '.json'])
+
+    # create a hashtable of all images in dataset path
+    image_names = {}
+    for fn in listdir(dataset_path):
+        if fn[-4:] == '.png':
+            image_names[fn] = True
 
     # import images and convert to tensor
     images = []
     batch_img = []
     annotations = []
     batch_ann = []
+    images_in_dataset = []
 
     # for each image
-    for i, iname, aname in zip(range(1, len(ann_names) + 1),
-                               image_names,
-                               ann_names):
+    for i, aname in zip(range(1, len(ann_names) + 1), ann_names):
+        iname = aname[:-5] + ".png"
+
+        if image_names.get(iname) is None:
+            continue
+
         # get corresponding image/annot
         temp_img = cv2.imread(dataset_path + iname)  # image
         with open(dataset_path + aname) as ann_file:  # annotation
             temp_ann = json.load(ann_file)
+
+        # TODO -- FIX THIS, gets rid of all negative samples
+        if temp_ann["annotations"] is None:
+            continue
+
+        images_in_dataset.append(iname)
+
         # normalize image
         temp_img = normalize_img(temp_img, scaling)
         # resize
         temp_img, temp_ann = resize(temp_img, temp_ann['annotations'],
                                     height, width)
+
         # bounding boxes
         temp_boxes = []
         for poly in temp_ann:
@@ -219,7 +240,12 @@ def get_dataset(configs, height, width, scaling='minmax'):
 
         # append as tensors
         batch_img.append(Tensor(temp_img))
-        batch_ann.append(stack(temp_boxes))
+
+        if temp_boxes:
+            batch_ann.append(stack(temp_boxes))
+        else:
+            batch_ann.append(Tensor(temp_boxes))
+
         if i % batch_size == 0:
             images.append(stack(batch_img).permute(0, 3, 1, 2))
             annotations.append(batch_ann)
@@ -231,4 +257,4 @@ def get_dataset(configs, height, width, scaling='minmax'):
         images.append(stack(batch_img).permute(0, 3, 1, 2))  # (32, 300, 300, 3) (32, 3, 300, 300)
         annotations.append(batch_ann)
 
-    return images, annotations
+    return images, annotations, images_in_dataset
